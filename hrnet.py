@@ -1,4 +1,3 @@
-
 """
 HRNet models for Keras
 https://arxiv.org/pdf/1902.09212.pdf
@@ -175,7 +174,7 @@ def HRNet(stage_fn=None,
 
 def conv2d_bn(inputs, filters, kernel_size, strides=1, padding='valid',
               activation=None, use_bias=False, kernel_initializer='he_normal',
-              bn_axis=3, bn_momentum=0.01,
+              bn_axis=3, bn_momentum=0.1,
               name=None):
     block, idx = name.split('conv')
     x = layers.Conv2D(filters, kernel_size, strides, padding,
@@ -415,6 +414,3 @@ def fuse_layer4(inputs, filters=32, name='final_fuse'):
 if __name__=='__main__':
     model = HRNet(input_shape=(320, 320, 3), classes=17)
     print(model.summary())
-
-
-
