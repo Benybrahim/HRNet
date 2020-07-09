@@ -1,27 +1,115 @@
+
 """
-Implementation of HRNet Network paper:
+HRNet models for Keras
 https://arxiv.org/pdf/1902.09212.pdf
 """
+# pylint: disable=invalid-name
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+
 import tensorflow as tf
+from tensorflow.keras import backend
 
-layers = tf.keras.layers
-initializers = tf.keras.initializers
-
-BN_MOMENTUM = 0.1
-CONV_BIAS = False
-CONV_INIT = 'he_normal'
-UP_MODE ='nearest'
+from tensorflow.keras import layers
+#from tensorflow.python.keras.engine import training
+#from tensorflow.python.keras.utils import data_utils
+#from tensorflow.python.keras.utils import layer_utils
+#from tensorflow.python.util.tf_export import keras_export
 
 
-def HRNet(input_shape, classes, weights=None):
+def HRNet(stage_fn=None,
+          model_name='hrnet',
+          include_top=True,
+          pose_estimation_top=True,
+          weights=None,
+          input_tensor=None,
+          input_shape=None,
+          pooling=None,
+          classes=1000,
+          **kwargs):
+    """Instantiates the HRNet architecture.
+    Optionally loads weights pre-trained on ImageNet.
+    Note that the data format convention used by the model is
+    the one specified in your Keras config at `~/.keras/keras.json`.
+    Caution: Be sure to properly pre-process your inputs to the application.
+    Please see `applications.resnet.preprocess_input` for an example.
+    Arguments:
+      stage_fn: a function that returns output tensor for the
+        high resolution module stage blocks.
+      model_name: string, model name.
+      include_top: whether to include the fully-connected
+        layer at the top of the network.
+      pose_estimation_top: whether to include convolution layer instead of
+        fully_connected layer at the top of the network
+        (only if include_top=True)
+      weights: one of `None` (random initialization),
+        'imagenet' (pre-training on ImageNet),
+        or the path to the weights file to be loaded.
+      input_tensor: optional Keras tensor
+        (i.e. output of `layers.Input()`)
+        to use as image input for the model.
+      input_shape: optional shape tuple, only to be specified
+        if `include_top` is False (otherwise the input shape
+        has to be `(384, 288, 3)` (with `channels_last` data format)
+        or `(3, 384, 288)` (with `channels_first` data format).
+        It should have exactly 3 inputs channels.
+      pooling: optional pooling mode for feature extraction
+        when `include_top` is `False`.
+        - `None` means that the output of the model will be
+            the 4D tensor output of the
+            last convolutional layer.
+        - `avg` means that global average pooling
+            will be applied to the output of the
+            last convolutional layer, and thus
+            the output of the model will be a 2D tensor.
+        - `max` means that global max pooling will
+            be applied.
+      classes: optional number of classes to classify images
+        into, only to be specified if `include_top` is True, and
+        if no `weights` argument is specified.
+      **kwargs: For backwards compatibility only.
+    Returns:
+      A `keras.Model` instance.
+    Raises:
+      ValueError: in case of invalid argument for `weights`,
+        or invalid input shape.
+      ValueError: if `classifier_activation` is not `softmax` or `None` when
+        using a pretrained top layer.
+    """
 
-    inputs = layers.Input(input_shape, name='input')
+    if 'layers' in kwargs:
+        global layers
+        layers = kwargs.pop('layers')
+    if kwargs:
+        raise ValueError('Unknown argument(s): %s' % (kwargs,))
+    if not (weights in {'imagenet', None} or os.path.exists(weights)):
+        raise ValueError('The `weights` argument should be either '
+                         '`None` (random initialization), `imagenet` '
+                         '(pre-training on ImageNet), '
+                         'or the path to the weights file to be loaded.')
+
+    if weights == 'imagenet' and include_top and classes != 1000:
+        raise ValueError('If using `weights` as `"imagenet"` with `include_top`'
+                         ' as true, `classes` should be 1000')
+
+    if input_tensor is None:
+        img_input = layers.Input(shape=input_shape)
+    else:
+        if not backend.is_keras_tensor(input_tensor):
+            img_input = layers.Input(tensor=input_tensor, shape=input_shape)
+        else:
+            img_input = input_tensor
+
+    bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
 
     # STAGE 1
-    x = conv2d_bn(inputs, 64, 3, 2, padding='same', activation='relu',
-                  name='stage1_stem_conv1')
+    x = conv2d_bn(img_input, 64, 3, 2, padding='same', activation='relu',
+                  bn_axis=bn_axis, name='stage1_stem_conv1')
     x = conv2d_bn(x, 64, 3, 2, padding='same', activation='relu',
-                  name='stage1_stem_conv2')
+                  bn_axis=bn_axis, name='stage1_stem_conv2')
     x = bottleneck_block(x, 256, downsample=True, name='stage1_bottleneck1')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck2')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck3')
@@ -55,14 +143,33 @@ def HRNet(input_shape, classes, weights=None):
         if i != 2:
             x1, x2, x3, x4 = fuse_layer3([x1, x2, x3, x4],
                                          filters=[32, 64, 128, 256],
-                                         name=f'stage4_{i + 1}_fuse')
+                                         name=f'stage4_{i+1}_fuse')
         else:
-            x = fuse_layer4([x1, x2, x3, x4], 32, name=f'stage4_{i + 1}_fuse')
+            x = fuse_layer4([x1, x2, x3, x4], 32, name=f'stage4_{i+1}_fuse')
 
-    outputs = layers.Conv2D(classes, 1, activation='sigmoid', name='output')(x)
+    if include_top:
+        if pose_estimation_top:
+            x = layers.Conv2D(classes, 1, 1, name='predictions')(x)
+        else:
+            x = layers.GlobalAveragePooling2D(name='avg_pool')(x)
+            classifier_activation = 'sigmoid' if classes == 2 else 'softmax'
+            x = layers.Dense(classes, classifier_activation,
+                             name='predictions')(x)
+    else:
+        if pooling == 'avg':
+            x = layers.GlobalAveragePooling2D(name='avg_pool')(x)
+        elif pooling == 'max':
+            x = layers.GlobalMaxPooling2D(name='max_pool')(x)
+
+    # Ensure that the model takes into account
+    # any potential predecessors of `input_tensor`.
+    if input_tensor is not None:
+        inputs = tf.keras.utils.get_source_inputs(input_tensor)
+    else:
+        inputs = img_input
 
     # create model
-    model = tf.keras.Model(inputs, outputs)
+    model = tf.keras.Model(inputs, x)
 
     # Load weights.
     if weights is not None:
@@ -72,13 +179,16 @@ def HRNet(input_shape, classes, weights=None):
 
 
 def conv2d_bn(inputs, filters, kernel_size, strides=1, padding='valid',
-              activation=None, name=None):
+              activation=None, use_bias=False, kernel_initializer='he_normal',
+              bn_axis=3, bn_momentum=0.01,
+              name=None):
     block, idx = name.split('conv')
     x = layers.Conv2D(filters, kernel_size, strides, padding,
-                      kernel_initializer=CONV_INIT,
-                      use_bias=CONV_BIAS,
+                      kernel_initializer=kernel_initializer,
+                      use_bias=use_bias,
                       name=name)(inputs)
-    x = layers.BatchNormalization(momentum=BN_MOMENTUM,
+    x = layers.BatchNormalization(axis=bn_axis,
+                                  momentum=bn_momentum,
                                   name=f'{block}bn{idx}')(x)
     if activation:
         x = layers.Activation(activation, name=f'{block}relu{idx}')(x)
@@ -310,7 +420,7 @@ def fuse_layer4(inputs, filters=32, name='final_fuse'):
 if __name__=='__main__':
     # test
     # (256, 192) or (384, 288)
-    model = HRNet((320, 320, 3), 17)
+    model = HRNet(input_shape=(320, 320, 3), classes=17)
     print(model.summary())
 
 
