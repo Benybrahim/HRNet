@@ -1,30 +1,27 @@
 """
 Implementation of HRNet Network paper:
+https://arxiv.org/pdf/1902.09212.pdf
 """
-import os
-import logging
-
 import tensorflow as tf
 
-logger = logging.getLogger(__name__)
 layers = tf.keras.layers
+initializers = tf.keras.initializers
+
 BN_MOMENTUM = 0.1
-CONV_BIAS=False
+CONV_BIAS = False
+CONV_INIT = 'he_normal'
+UP_MODE ='nearest'
 
 
-kernel_initializer='he_normal'
-upsampling_interpolation='nearest'
-# batch norm axis=3 ??
-
-
-
-def HRNet(input_shape, classes):
+def HRNet(input_shape, classes, weights=None):
 
     inputs = layers.Input(input_shape, name='input')
 
     # STAGE 1
-    x = conv2d_bn(inputs, 64, 3, 2, padding='same', activation='relu', name='stage1_stem_conv1')
-    x = conv2d_bn(x, 64, 3, 2, padding='same', activation='relu', name='stage1_stem_conv2')
+    x = conv2d_bn(inputs, 64, 3, 2, padding='same', activation='relu',
+                  name='stage1_stem_conv1')
+    x = conv2d_bn(x, 64, 3, 2, padding='same', activation='relu',
+                  name='stage1_stem_conv2')
     x = bottleneck_block(x, 256, downsample=True, name='stage1_bottleneck1')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck2')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck3')
@@ -64,33 +61,39 @@ def HRNet(input_shape, classes):
 
     outputs = layers.Conv2D(classes, 1, activation='sigmoid', name='output')(x)
 
+    # create model
     model = tf.keras.Model(inputs, outputs)
+
+    # Load weights.
+    if weights is not None:
+        model.load_weights(weights)
+
     return model
 
 
-    # Module 1
-
-
 def conv2d_bn(inputs, filters, kernel_size, strides=1, padding='valid',
-             activation=None, name=None):
+              activation=None, name=None):
     block, idx = name.split('conv')
     x = layers.Conv2D(filters, kernel_size, strides, padding,
+                      kernel_initializer=CONV_INIT,
                       use_bias=CONV_BIAS,
                       name=name)(inputs)
     x = layers.BatchNormalization(momentum=BN_MOMENTUM,
                                   name=f'{block}bn{idx}')(x)
     if activation:
-        x = layers.Activation(activation,
-                              name=f'{block}relu{idx}')(x)
+        x = layers.Activation(activation, name=f'{block}relu{idx}')(x)
     return x
 
-def bottleneck_block(inputs, filters, strides=1, downsample=False, name='bottleneck'):
+def bottleneck_block(inputs, filters, strides=1, downsample=False,
+                     name='bottleneck'):
     expansion = 4
 
     residual = inputs
 
-    x = conv2d_bn(inputs, filters//expansion, 1, padding='same', activation='relu', name=f'{name}_conv1')
-    x = conv2d_bn(x, filters//expansion, 3, strides, padding='same', activation='relu', name=f'{name}_conv2')
+    x = conv2d_bn(inputs, filters//expansion, 1, padding='same',
+                  activation='relu', name=f'{name}_conv1')
+    x = conv2d_bn(x, filters//expansion, 3, strides, padding='same',
+                  activation='relu', name=f'{name}_conv2')
     x = conv2d_bn(x, filters, 1, 1, name=f'{name}_conv3')
 
     if downsample:
@@ -119,11 +122,14 @@ def basic_block(inputs, filters, strides=1, downsample=False, name='basic'):
     expansion = 1
     residual = inputs
 
-    x = conv2d_bn(inputs, filters//expansion, 3, strides, padding='same', activation='relu', name=f'{name}_conv1')
-    x = conv2d_bn(x, filters//expansion, 3, 1, padding='same', name=f'{name}_conv2')
+    x = conv2d_bn(inputs, filters//expansion, 3, strides, padding='same',
+                  activation='relu', name=f'{name}_conv1')
+    x = conv2d_bn(x, filters//expansion, 3, 1, padding='same',
+                  name=f'{name}_conv2')
 
     if downsample:
-        residual = conv2d_bn(inputs, filters, 1, strides, name=f'{name}_down_conv')
+        residual = conv2d_bn(inputs, filters, 1, strides,
+                             name=f'{name}_down_conv')
 
     x = layers.Add(name=f'{name}_res')([x, residual])
     x = layers.Activation('relu', name=f'{name}_out')(x)
@@ -186,8 +192,10 @@ def fuse_layer2(inputs, filters=[32, 64, 128], name='stage3_fuse'):
     # branch 3
     x33 = x3
 
-    x13 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu', name=f'{name}_conv1_3_1')
-    x13 = conv2d_bn(x13, filters[2], 3, 2, padding='same', name=f'{name}_conv1_3_2')
+    x13 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv1_3_1')
+    x13 = conv2d_bn(x13, filters[2], 3, 2, padding='same',
+                    name=f'{name}_conv1_3_2')
 
     x23 = conv2d_bn(x2, filters[2], 3, 2, padding='same', name=f'{name}_conv2_3')
 
@@ -199,10 +207,14 @@ def fuse_layer2(inputs, filters=[32, 64, 128], name='stage3_fuse'):
 def transition_layer3(inputs, filters, name='stage3_transition'):
     x1, x2, x3 = inputs
 
-    x1 = conv2d_bn(x1, filters[0], 3, 1, padding='same', activation='relu', name=f'{name}_conv1')
-    x2 = conv2d_bn(x2, filters[1], 3, 1, padding='same', activation='relu', name=f'{name}_conv2')
-    x31 = conv2d_bn(x3, filters[2], 3, 1, padding='same', activation='relu', name=f'{name}_conv3')
-    x32 = conv2d_bn(x3, filters[3], 3, 2, padding='same', activation='relu', name=f'{name}_conv4')
+    x1 = conv2d_bn(x1, filters[0], 3, 1, padding='same', activation='relu',
+                   name=f'{name}_conv1')
+    x2 = conv2d_bn(x2, filters[1], 3, 1, padding='same', activation='relu',
+                   name=f'{name}_conv2')
+    x31 = conv2d_bn(x3, filters[2], 3, 1, padding='same', activation='relu',
+                    name=f'{name}_conv3')
+    x32 = conv2d_bn(x3, filters[3], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv4')
 
     return [x1, x2, x31, x32]
 
@@ -241,10 +253,13 @@ def fuse_layer3(inputs, filters=[32, 64, 128, 256], name='stage4_fuse'):
     # branch 3
     x33 = x3
 
-    x13 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu', name=f'{name}_conv1_3_1')
-    x13 = conv2d_bn(x13, filters[2], 3, 2, padding='same', name=f'{name}_conv1_3_2')
+    x13 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv1_3_1')
+    x13 = conv2d_bn(x13, filters[2], 3, 2, padding='same',
+                    name=f'{name}_conv1_3_2')
 
-    x23 = conv2d_bn(x2, filters[2], 3, 2, padding='same', name=f'{name}_conv2_3')
+    x23 = conv2d_bn(x2, filters[2], 3, 2, padding='same',
+                    name=f'{name}_conv2_3')
 
     x43 = conv2d_bn(x4, filters[2], 1, 1, name=f'{name}_conv4_3')
     x43 = layers.UpSampling2D(2, name=f'{name}_up4_3')(x43)
@@ -255,12 +270,17 @@ def fuse_layer3(inputs, filters=[32, 64, 128, 256], name='stage4_fuse'):
     # branch 4
     x44 = x4
 
-    x14 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu', name=f'{name}_conv1_4_1')
-    x14 = conv2d_bn(x14, filters[0], 3, 2, padding='same', activation='relu', name=f'{name}_conv1_4_2')
-    x14 = conv2d_bn(x14, filters[3], 3, 2, padding='same', name=f'{name}_conv1_4_3')
+    x14 = conv2d_bn(x1, filters[0], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv1_4_1')
+    x14 = conv2d_bn(x14, filters[0], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv1_4_2')
+    x14 = conv2d_bn(x14, filters[3], 3, 2, padding='same',
+                    name=f'{name}_conv1_4_3')
 
-    x24 = conv2d_bn(x2, filters[1], 3, 2, padding='same', activation='relu', name=f'{name}_conv2_4_1')
-    x24 = conv2d_bn(x24, filters[3], 3, 2, padding='same', name=f'{name}_conv2_4_2')
+    x24 = conv2d_bn(x2, filters[1], 3, 2, padding='same', activation='relu',
+                    name=f'{name}_conv2_4_1')
+    x24 = conv2d_bn(x24, filters[3], 3, 2, padding='same',
+                    name=f'{name}_conv2_4_2')
 
     x34 = conv2d_bn(x3, filters[3], 3, 2, padding='same', name=f'{name}_conv3_4')
 
