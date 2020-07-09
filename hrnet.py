@@ -11,13 +11,8 @@ from __future__ import print_function
 import os
 
 import tensorflow as tf
-from tensorflow.keras import backend
 
-from tensorflow.keras import layers
-#from tensorflow.python.keras.engine import training
-#from tensorflow.python.keras.utils import data_utils
-#from tensorflow.python.keras.utils import layer_utils
-#from tensorflow.python.util.tf_export import keras_export
+layers = tf.keras.layers
 
 
 def HRNet(stage_fn=None,
@@ -98,7 +93,7 @@ def HRNet(stage_fn=None,
     if input_tensor is None:
         img_input = layers.Input(shape=input_shape)
     else:
-        if not backend.is_keras_tensor(input_tensor):
+        if not tf.keras.backend.is_keras_tensor(input_tensor):
             img_input = layers.Input(tensor=input_tensor, shape=input_shape)
         else:
             img_input = input_tensor
@@ -169,7 +164,7 @@ def HRNet(stage_fn=None,
         inputs = img_input
 
     # create model
-    model = tf.keras.Model(inputs, x)
+    model = tf.keras.Model(inputs, x, name=model_name)
 
     # Load weights.
     if weights is not None:
@@ -418,8 +413,6 @@ def fuse_layer4(inputs, filters=32, name='final_fuse'):
 
 
 if __name__=='__main__':
-    # test
-    # (256, 192) or (384, 288)
     model = HRNet(input_shape=(320, 320, 3), classes=17)
     print(model.summary())
 
