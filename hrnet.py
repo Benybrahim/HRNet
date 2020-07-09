@@ -24,7 +24,7 @@ def HRNet(input_shape, classes):
 
     # STAGE 1
     x = conv2d_bn(inputs, 64, 3, 2, padding='same', activation='relu', name='stage1_stem_conv1')
-    x = conv2d_bn(inputs, 64, 3, 2, padding='same', activation='relu', name='stage1_stem_conv2')
+    x = conv2d_bn(x, 64, 3, 2, padding='same', activation='relu', name='stage1_stem_conv2')
     x = bottleneck_block(x, 256, downsample=True, name='stage1_bottleneck1')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck2')
     x = bottleneck_block(x, 256, downsample=False, name='stage1_bottleneck3')
